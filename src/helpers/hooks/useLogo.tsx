@@ -17,11 +17,9 @@ const useLogo = () => {
     'STATIC_ASSETS_PATH',
   );
 
-  const [logo, setLogo] = useState<string>(
-    `${assetPath}/imgs/main-logo-light.png`,
-  );
+  const [logo, setLogo] = useState<string>(`${assetPath}/imgs/logo-color.png`);
   const [darkLogo, setDarkLogo] = useState<string>(
-    `${assetPath}/imgs/main-logo-dark.png`,
+    `${assetPath}/imgs/logo-white.png`,
   );
 
   useEffect(() => {
