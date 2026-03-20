@@ -54,7 +54,7 @@ jobs:
         run: |
           mkdir -p tmp/client
           cp LICENSE tmp/client/
-          cp -r dist/* tmp/client/
+          cp -r dist tmp/client/
           cd tmp
           zip -X -r plugnmeet-client.zip client
           sha256sum plugnmeet-client.zip > plugnmeet-client.zip.sha256
