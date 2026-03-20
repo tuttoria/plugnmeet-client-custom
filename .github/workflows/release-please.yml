@@ -9,8 +9,11 @@ permissions:
   pull-requests: write
 
 jobs:
-  release-client:
+  release-please:
     runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -18,61 +21,63 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
-      - name: Checkout
-        uses: actions/checkout@v6
-      - name: setup node
-        uses: actions/setup-node@v6
+
+  build-and-upload:
+    needs: release-please
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: 'lts/*'
       - uses: pnpm/action-setup@v4
         name: Install pnpm
         with:
           version: 10
+      - name: Get pnpm store directory
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+      - uses: actions/cache@v4
+        with:
+          path: ${{ env.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: ${{ runner.os }}-pnpm-store-
       - name: Install dependencies
         run: pnpm install
-      - name: Release as beta
-        if: ${{ ! steps.release.outputs.release_created }}
+      - name: Lint check
+        run: pnpm run lint:check
+      - name: Format check
+        run: pnpm run format:check
+      - name: Build
+        run: pnpm run build
+      - name: Package artifact
         run: |
-          # update package version
-          pnpm version prerelease --no-commit-hooks --no-git-tag-version
-
-          # push changes
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git add .
-          git commit -m "bump beta version" --no-verify
-          git push
-
-          # now create zip file
-          pnpm run build
-          echo ${BETA_VERSION} > dist/version.txt
           mkdir -p tmp/client
-          rsync -ar LICENSE dist tmp/client/
+          cp LICENSE tmp/client/
+          cp -r dist/* tmp/client/
           cd tmp
-          zip -X -r client.zip client
-      - name: Upload by ftp
-        uses: SamKirkland/FTP-Deploy-Action@v4.3.6
-        if: ${{ ! steps.release.outputs.release_created }}
-        with:
-          server: ${{ secrets.PNM_FTP_HOST }}
-          username: ${{ secrets.PNM_FTP_USER }}
-          password: ${{ secrets.PNM_FTP_PASSWORD }}
-          local-dir: './tmp/'
-          state-name: '.client-sync-state.json'
-          exclude: |
-            **/client/**
-      - name: Release as production
-        if: ${{ steps.release.outputs.release_created }}
+          zip -X -r plugnmeet-client.zip client
+          sha256sum plugnmeet-client.zip > plugnmeet-client.zip.sha256
+      - name: Upload to release
+        if: needs.release-please.outputs.release_created == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          pnpm run build
-
-          ## save latest version tag
-          echo ${{ steps.release.outputs.tag_name }} > dist/version.txt
-
-          mkdir -p tmp/client
-          rsync -ar LICENSE dist tmp/client/
           cd tmp
-          zip -X -r client.zip client
-          gh release upload ${{ steps.release.outputs.tag_name }} client.zip
+          gh release upload ${{ needs.release-please.outputs.tag_name }} \
+            plugnmeet-client.zip \
+            plugnmeet-client.zip.sha256
+      - name: Upload as pre-release
+        if: needs.release-please.outputs.release_created != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          TAG="v$(node -p "require('./package.json').version")-beta.${SHORT_SHA}"
+          cd tmp
+          gh release create "$TAG" \
+            plugnmeet-client.zip \
+            plugnmeet-client.zip.sha256 \
+            --prerelease \
+            --title "Beta build ${TAG}" \
+            --notes "Automated beta build from commit ${GITHUB_SHA}"
